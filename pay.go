@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"hash"
+	"io"
 	"io/ioutil"
 	"net/http"
 	"net/url"
@@ -65,6 +66,7 @@ func (pay *WeixinPay) Sanbox() *WeixinPay {
 	return pay
 }
 
+// 返回带证书的客户端
 func (pay *WeixinPay) Cert(caCert string) *WeixinPay {
 	roots := x509.NewCertPool()
 	ok := roots.AppendCertsFromPEM([]byte(caCert))
@@ -150,6 +152,24 @@ func (pay *WeixinPay) Do(path string, in, res interface{}) error {
 	return nil
 }
 
+func (pay *WeixinPay) DoWithParams(path string, params map[string]string, in, out interface{}) error {
+	data := ToData(in, "xml")
+	for k, v := range params {
+		data[k] = v
+	}
+	return pay.Do(path, data, out)
+}
+
+// 默认参数
+// 发红包等API与此默认参数有些不同
+func (pay *WeixinPay) DoWithDefaultParams(path string, in, out interface{}) error {
+	params := map[string]string{
+		"appId":  pay.AppId,
+		"mch_id": pay.MchId,
+	}
+	return pay.DoWithParams(path, params, in, out)
+}
+
 // 生成32位随机字符串
 func (pay *WeixinPay) NonceStr() string {
 	return RandString(32)
@@ -227,20 +247,18 @@ type UnifiedOrderRequest struct {
 	TradeType      string `xml:"trade_type"`       // 取值如下：JSAPI，NATIVE，APP，详细说明见参数规定
 
 	// 可选参数
-	DeviceInfo string `xml:"device_info"` // 终端设备号(门店号或收银设备ID)，注意：PC网页或公众号内支付请传"WEB"
-	NonceStr   string `xml:"nonce_str"`   // 随机字符串，不长于32位。NOTE: 如果为空则系统会自动生成一个随机字符串。
-	SignType   string `xml:"sign_type"`   // 签名类型，默认为MD5，支持HMAC-SHA256和MD5。
-	Detail     string `xml:"detail"`      // 商品名称明细列表
-	Attach     string `xml:"attach"`      // 附加数据，在查询API和支付通知中原样返回，该字段主要用于商户携带订单的自定义数据
-	FeeType    string `xml:"fee_type"`    // 符合ISO 4217标准的三位字母代码，默认人民币：CNY，其他值列表详见货币类型
-	TimeStart  string `xml:"time_start"`  // 订单生成时间，格式为yyyyMMddHHmmss，如2009年12月25日9点10分10秒表示为20091225091010。其他详见时间规则
-	TimeExpire string `xml:"time_expire"` // 订单失效时间，格式为yyyyMMddHHmmss，如2009年12月27日9点10分10秒表示为20091227091010。其他详见时间规则
-	GoodsTag   string `xml:"goods_tag"`   // 商品标记，代金券或立减优惠功能的参数，说明详见代金券或立减优惠
-	ProductId  string `xml:"product_id"`  // trade_type=NATIVE，此参数必传。此id为二维码中包含的商品ID，商户自行定义。
-	LimitPay   string `xml:"limit_pay"`   // no_credit--指定不能使用信用卡支付
-	OpenId     string `xml:"openid"`      // rade_type=JSAPI，此参数必传，用户在商户appid下的唯一标识。
-	SubOpenId  string `xml:"sub_openid"`  // trade_type=JSAPI，此参数必传，用户在子商户appid下的唯一标识。openid和sub_openid可以选传其中之一，如果选择传sub_openid,则必须传sub_appid。
-	SceneInfo  string `xml:"scene_info"`  // 该字段用于上报支付的场景信息,针对H5支付有以下三种场景,请根据对应场景上报,H5支付不建议在APP端使用，针对场景1，2请接入APP支付，不然可能会出现兼容性问题
+	DeviceInfo string `xml:"device_info,omitempty"` // 终端设备号(门店号或收银设备ID)，注意：PC网页或公众号内支付请传"WEB"
+	Detail     string `xml:"detail,omitempty"`      // 商品名称明细列表
+	Attach     string `xml:"attach,omitempty"`      // 附加数据，在查询API和支付通知中原样返回，该字段主要用于商户携带订单的自定义数据
+	FeeType    string `xml:"fee_type,omitempty"`    // 符合ISO 4217标准的三位字母代码，默认人民币：CNY，其他值列表详见货币类型
+	TimeStart  string `xml:"time_start,omitempty"`  // 订单生成时间，格式为yyyyMMddHHmmss，如2009年12月25日9点10分10秒表示为20091225091010。其他详见时间规则
+	TimeExpire string `xml:"time_expire,omitempty"` // 订单失效时间，格式为yyyyMMddHHmmss，如2009年12月27日9点10分10秒表示为20091227091010。其他详见时间规则
+	GoodsTag   string `xml:"goods_tag,omitempty"`   // 商品标记，代金券或立减优惠功能的参数，说明详见代金券或立减优惠
+	ProductId  string `xml:"product_id,omitempty"`  // trade_type=NATIVE，此参数必传。此id为二维码中包含的商品ID，商户自行定义。
+	LimitPay   string `xml:"limit_pay,omitempty"`   // no_credit--指定不能使用信用卡支付
+	OpenId     string `xml:"openid,omitempty"`      // rade_type=JSAPI，此参数必传，用户在商户appid下的唯一标识。
+	SubOpenId  string `xml:"sub_openid,omitempty"`  // trade_type=JSAPI，此参数必传，用户在子商户appid下的唯一标识。openid和sub_openid可以选传其中之一，如果选择传sub_openid,则必须传sub_appid。
+	SceneInfo  string `xml:"scene_info,omitempty"`  // 该字段用于上报支付的场景信息,针对H5支付有以下三种场景,请根据对应场景上报,H5支付不建议在APP端使用，针对场景1，2请接入APP支付，不然可能会出现兼容性问题
 }
 
 type UnifiedOrderResponse struct {
@@ -262,7 +280,7 @@ func (pay *WeixinPay) UnifiedOrder(req *UnifiedOrderRequest) (resp *UnifiedOrder
 		req.NotifyUrl = pay.NotifyUrl
 	}
 	resp = &UnifiedOrderResponse{}
-	err = pay.Do("/pay/unifiedorder", req, resp)
+	err = pay.DoWithDefaultParams("/pay/unifiedorder", req, resp)
 	if err != nil {
 		return nil, err
 	}
@@ -293,6 +311,224 @@ func (pay *WeixinPay) Jsapi(req *UnifiedOrderRequest) (resp *JsapiResponse, err 
 		NonceStr:  pay.NonceStr(),
 		SignType:  "MD5",
 	}
-	resp.PaySign = pay.Sign(resp)
+	resp.PaySign = pay.Sign(resp, nil)
 	return
+}
+
+type OrderQueryRequest struct {
+	XMLName struct{} `xml:"xml" json:"-"`
+
+	// 下面这些参数至少提供一个
+	TransactionId string `xml:"transaction_id,omitempty"` // 微信的订单号，优先使用
+	OutTradeNo    string `xml:"out_trade_no,omitempty"`   // 商户系统内部的订单号，当没提供transaction_id时需要传这个。
+}
+
+type OrderQueryResponse struct {
+	XMLName struct{} `xml:"xml" json:"-"`
+
+	// 必选返回
+	TradeState     string `xml:"trade_state"`      // 交易状态
+	TradeStateDesc string `xml:"trade_state_desc"` // 对当前查询订单状态的描述和下一步操作的指引
+	OpenId         string `xml:"openid"`           // 用户在商户appid下的唯一标识
+	TransactionId  string `xml:"transaction_id"`   // 微信支付订单号
+	OutTradeNo     string `xml:"out_trade_no"`     // 商户系统的订单号，与请求一致。
+	TradeType      string `xml:"trade_type"`       // 调用接口提交的交易类型，取值如下：JSAPI，NATIVE，APP，MICROPAY，详细说明见参数规定
+	BankType       string `xml:"bank_type"`        // 银行类型，采用字符串类型的银行标识
+	TotalFee       int64  `xml:"total_fee"`        // 订单总金额，单位为分
+	CashFee        int64  `xml:"cash_fee"`         // 现金支付金额订单现金支付金额，详见支付金额
+	TimeEnd        string `xml:"time_end"`         // 订单支付时间，格式为yyyyMMddHHmmss，如2009年12月25日9点10分10秒表示为20091225091010。其他详见时间规则
+
+	// 下面字段都是可选返回的(详细见微信支付文档), 为空值表示没有返回, 程序逻辑里需要判断
+	DeviceInfo         string `xml:"device_info"`          // 微信支付分配的终端设备号
+	IsSubscribe        string `xml:"is_subscribe"`         // 用户是否关注公众账号
+	SubOpenId          string `xml:"sub_openid"`           // 用户在子商户appid下的唯一标识
+	SubIsSubscribe     string `xml:"sub_is_subscribe"`     // 用户是否关注子公众账号
+	SettlementTotalFee int64  `xml:"settlement_total_fee"` // 应结订单金额=订单金额-非充值代金券金额，应结订单金额<=订单金额。
+	FeeType            string `xml:"fee_type"`             // 货币类型，符合ISO 4217标准的三位字母代码，默认人民币：CNY，其他值列表详见货币类型
+	CashFeeType        string `xml:"cash_fee_type"`        // 货币类型，符合ISO 4217标准的三位字母代码，默认人民币：CNY，其他值列表详见货币类型
+	Detail             string `xml:"detail"`               // 商品详情
+	Attach             string `xml:"attach"`               // 附加数据，原样返回
+}
+
+// 订单查询
+func (pay *WeixinPay) OrderQuery(req *OrderQueryRequest) (resp *OrderQueryResponse, err error) {
+	resp = &OrderQueryResponse{}
+	err = pay.DoWithDefaultParams("/pay/orderquery", req, resp)
+	if err != nil {
+		return nil, err
+	}
+	return
+}
+
+type CloseOrderRequest struct {
+	XMLName struct{} `xml:"xml" json:"-"`
+
+	// 必选参数
+	OutTradeNo string `xml:"out_trade_no"` // 商户系统内部订单号
+}
+
+// 关闭订单
+func (pay *WeixinPay) CloseOrder(req *CloseOrderRequest) (err error) {
+	err = pay.DoWithDefaultParams("/pay/closeorder", req, nil)
+	return
+}
+
+type RefundRequest struct {
+	XMLName struct{} `xml:"xml" json:"-"`
+
+	// 必选参数, TransactionId 和 OutTradeNo 二选一即可.
+	TransactionId string `xml:"transaction_id"` // 微信生成的订单号，在支付通知中有返回
+	OutTradeNo    string `xml:"out_trade_no"`   // 商户侧传给微信的订单号
+	OutRefundNo   string `xml:"out_refund_no"`  // 商户系统内部的退款单号，商户系统内部唯一，同一退款单号多次请求只退一笔
+	TotalFee      int64  `xml:"total_fee"`      // 订单总金额，单位为分，只能为整数，详见支付金额
+	RefundFee     int64  `xml:"refund_fee"`     // 退款总金额，订单总金额，单位为分，只能为整数，详见支付金额
+
+	// 可选参数
+	RefundFeeType string `xml:"refund_fee_type,omitempty"` // 货币类型，符合ISO 4217标准的三位字母代码，默认人民币：CNY，其他值列表详见货币类型
+	RefundDesc    string `xml:"refund_desc,omitempty"`     // 若商户传入，会在下发给用户的退款消息中体现退款原因
+	RefundAccount string `xml:"refund_account,omitempty"`  // 退款资金来源
+}
+
+type RefundResponse struct {
+	XMLName struct{} `xml:"xml" json:"-"`
+
+	// 必选返回
+	TransactionId string `xml:"transaction_id"` // 微信订单号
+	OutTradeNo    string `xml:"out_trade_no"`   // 商户系统内部的订单号
+	OutRefundNo   string `xml:"out_refund_no"`  // 商户退款单号
+	RefundId      string `xml:"refund_id"`      // 微信退款单号
+	RefundFee     int64  `xml:"refund_fee"`     // 退款总金额,单位为分,可以做部分退款
+	TotalFee      int64  `xml:"total_fee"`      // 订单总金额，单位为分，只能为整数，详见支付金额
+	CashFee       int64  `xml:"cash_fee"`       // 现金支付金额，单位为分，只能为整数，详见支付金额
+
+	// 下面字段都是可选返回的(详细见微信支付文档), 为空值表示没有返回, 程序逻辑里需要判断
+	SettlementRefundFee int64  `xml:"settlement_refund_fee"` // 退款金额=申请退款金额-非充值代金券退款金额，退款金额<=申请退款金额
+	SettlementTotalFee  int64  `xml:"settlement_total_fee"`  // 应结订单金额=订单金额-非充值代金券金额，应结订单金额<=订单金额。
+	FeeType             string `xml:"fee_type"`              // 订单金额货币类型，符合ISO 4217标准的三位字母代码，默认人民币：CNY，其他值列表详见货币类型
+	CashFeeType         string `xml:"cash_fee_type"`         // 货币类型，符合ISO 4217标准的三位字母代码，默认人民币：CNY，其他值列表详见货币类型
+	CashRefundFee       int64  `xml:"cash_refund_fee"`       // 现金退款金额，单位为分，只能为整数，详见支付金额
+}
+
+// 退款
+// 需要证书, Cert() 函数
+func (pay *WeixinPay) Refund(req *RefundRequest) (resp *RefundResponse, err error) {
+	resp = &RefundResponse{}
+	err = pay.DoWithDefaultParams("/secapi/pay/refund", req, resp)
+	if err != nil {
+		return nil, err
+	}
+	return
+}
+
+type RefundQueryRequest struct {
+	XMLName struct{} `xml:"xml" json:"-"`
+
+	// 必选参数, 四选一
+	TransactionId string `xml:"transaction_id,omitempty"` // 微信订单号
+	OutTradeNo    string `xml:"out_trade_no,omitempty"`   // 商户订单号
+	OutRefundNo   string `xml:"out_refund_no,omitempty"`  // 商户退款单号
+	RefundId      string `xml:"refund_id,omitempty"`      // 微信退款单号
+}
+
+type RefundQueryResponse struct {
+	XMLName struct{} `xml:"xml" json:"-"`
+
+	// 必选返回
+	TransactionId string       `xml:"transaction_id"` // 微信订单号
+	OutTradeNo    string       `xml:"out_trade_no"`   // 商户系统内部的订单号
+	TotalFee      int64        `xml:"total_fee"`      // 订单总金额，单位为分，只能为整数，详见支付金额
+	CashFee       int64        `xml:"cash_fee"`       // 现金支付金额，单位为分，只能为整数，详见支付金额
+	RefundCount   int          `xml:"refund_count"`   // 退款笔数
+	RefundList    []RefundItem `xml:"refund_list"`    // 退款列表
+
+	// 下面字段都是可选返回的(详细见微信支付文档), 为空值表示没有返回, 程序逻辑里需要判断
+	SettlementTotalFee int64  `xml:"settlement_total_fee"` // 应结订单金额=订单金额-非充值代金券金额，应结订单金额<=订单金额。
+	FeeType            string `xml:"fee_type"`             // 订单金额货币类型，符合ISO 4217标准的三位字母代码，默认人民币：CNY，其他值列表详见货币类型
+	CashFeeType        string `xml:"cash_fee_type"`        // 现金支付货币类型
+}
+
+type RefundItem struct {
+	XMLName struct{} `xml:"xml" json:"-"`
+
+	// 必选返回
+	OutRefundNo      string `xml:"out_refund_no"`      // 商户退款单号
+	RefundId         string `xml:"refund_id"`          // 微信退款单号
+	RefundFee        int64  `xml:"refund_fee"`         // 申请退款金额
+	RefundStatus     string `xml:"refund_status"`      // 退款状态
+	RefundRecvAccout string `xml:"refund_recv_accout"` // 退款入账账户
+
+	// 下面字段都是可选返回的(详细见微信支付文档), 为空值表示没有返回, 程序逻辑里需要判断
+	RefundChannel       string `xml:"refund_channel"`        // 退款渠道
+	SettlementRefundFee int64  `xml:"settlement_refund_fee"` // 退款金额
+	RefundAccount       string `xml:"refund_account"`        // 退款资金来源
+	RefundSuccessTime   string `xml:"refund_success_time"`   // 退款成功时间
+}
+
+// 退款订单查询
+func (pay *WeixinPay) RefundQuery(req *RefundQueryRequest) (resp *RefundQueryResponse, err error) {
+	resp = &RefundQueryResponse{}
+	err = pay.DoWithDefaultParams("/pay/refundquery", req, resp)
+	if err != nil {
+		return nil, err
+	}
+	return
+}
+
+type ReverseRequest struct {
+	XMLName struct{} `xml:"xml" json:"-"`
+
+	// 必选参数，二选一
+	TransactionId string `xml:"transaction_id,omitempty"` // 微信的订单号，优先使用
+	OutTradeNo    string `xml:"out_trade_no,omitempty"`   // 商户系统内部订单号
+}
+
+type ReverseResponse struct {
+	XMLName struct{} `xml:"xml" json:"-"`
+
+	// 必选返回
+	Recall bool `xml:"recall"` // 是否需要继续调用撤销
+}
+
+// Reverse 撤销订单.
+//  NOTE: 请求需要双向证书.
+func (pay *WeixinPay) Reverse(req *ReverseRequest) (resp *ReverseResponse, err error) {
+	resp = &ReverseResponse{}
+	err = pay.DoWithDefaultParams("/secapi/pay/reverse", req, resp)
+	if err != nil {
+		return nil, err
+	}
+	return
+}
+
+type DownloadBillRequest struct {
+	XMLName struct{} `xml:"xml" json:"-"`
+
+	// 必选参数
+	BillDate string `xml:"bill_date"` // 下载对账单的日期，格式：20140603
+	BillType string `xml:"bill_type"` // 账单类型
+
+	// 可选参数
+	DeviceInfo string `xml:"device_info,omitemepty"` // 微信支付分配的终端设备号
+	TarType    string `xml:"tar_type,omitemepty"`    // 压缩账单
+}
+
+// 下载涨到到io.Writer
+func (pay *WeixinPay) DownloadBillToWriter(req *DownloadBillRequest, writer io.Writer) error {
+	var out string
+	err := pay.DoWithDefaultParams("/pay/downloadbill", req, &out)
+	if err != nil {
+		return err
+	}
+	_, err = writer.Write([]byte(out))
+	return err
+}
+
+// 下载账单到文件
+func (pay *WeixinPay) DownloadBillToFile(req *DownloadBillRequest, path string) error {
+	var out string
+	err := pay.DoWithDefaultParams("/pay/downloadbill", req, &out)
+	if err != nil {
+		return err
+	}
+	return ioutil.WriteFile(path, []byte(out), 0644)
 }
