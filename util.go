@@ -35,6 +35,7 @@ func RandString(n int) string {
 	return string(b)
 }
 
+// 将map[interface{}]interface{}跟结构体转换为map[string]string
 func ToData(raw interface{}, t string) (data map[string]string) {
 	data = make(map[string]string)
 	if raw == nil {

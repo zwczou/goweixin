@@ -91,6 +91,7 @@ func (pay *WeixinPay) Debug() *WeixinPay {
 	return pay
 }
 
+// 将map[string]string转换为map[string]string
 func (pay *WeixinPay) ToXml(params map[string]string) string {
 	buf := bytes.NewBuffer(nil)
 	buf.WriteString("<xml>")
