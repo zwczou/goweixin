@@ -87,9 +87,13 @@ func ToData(raw interface{}, t string) (data map[string]string) {
 					if valField.IsNil() {
 						continue
 					}
+				case reflect.Struct:
+					if valField.NumField() == 0 {
+						continue
+					}
 				}
 			}
-			if valField.Interface() == nil {
+			if valField.Interface() == nil || (valField.Kind() == reflect.Struct && valField.NumField() == 0) {
 				data[tag] = ""
 			} else {
 				data[tag] = fmt.Sprint(valField.Interface())

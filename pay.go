@@ -18,6 +18,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	log "github.com/sirupsen/logrus"
 )
 
 const (
@@ -36,6 +38,7 @@ type WeixinPay struct {
 	MchKey    string
 	NotifyUrl string
 	host      string
+	debug     bool
 }
 
 func NewWeixinPay(appId, mchId, mchKey, notifyUrl string) *WeixinPay {
@@ -83,6 +86,11 @@ func (pay *WeixinPay) Cert(caCert string) *WeixinPay {
 	return pay
 }
 
+func (pay *WeixinPay) Debug() *WeixinPay {
+	pay.debug = true
+	return pay
+}
+
 func (pay *WeixinPay) ToXml(params map[string]string) string {
 	buf := bytes.NewBuffer(nil)
 	buf.WriteString("<xml>")
@@ -96,7 +104,7 @@ func (pay *WeixinPay) ToXml(params map[string]string) string {
 func (pay *WeixinPay) Do(path string, in, res interface{}) error {
 	targetUrl := pay.host + path
 	params := ToData(in, "xml")
-	//params["appId"] = pay.AppId
+	//params["appid"] = pay.AppId
 	//params["mch_id"] = pay.MchId
 	params["nonce_str"] = pay.NonceStr()
 	params["sign"] = pay.Sign(params, nil)
@@ -104,6 +112,9 @@ func (pay *WeixinPay) Do(path string, in, res interface{}) error {
 	items := url.Values{}
 	for k, v := range params {
 		items.Set(k, v)
+	}
+	if pay.debug {
+		log.WithField("url", targetUrl).WithField("body", pay.ToXml(params)).Info("weixin pay request")
 	}
 	req, err := http.NewRequest("POST", targetUrl, strings.NewReader(pay.ToXml(params)))
 	if err != nil {
@@ -119,6 +130,9 @@ func (pay *WeixinPay) Do(path string, in, res interface{}) error {
 	body, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
 		return err
+	}
+	if pay.debug {
+		log.WithField("url", targetUrl).WithField("body", string(body)).Info("weixin pay response")
 	}
 
 	if res != nil {
@@ -164,7 +178,7 @@ func (pay *WeixinPay) DoWithParams(path string, params map[string]string, in, ou
 // 发红包等API与此默认参数有些不同
 func (pay *WeixinPay) DoWithDefaultParams(path string, in, out interface{}) error {
 	params := map[string]string{
-		"appId":  pay.AppId,
+		"appid":  pay.AppId,
 		"mch_id": pay.MchId,
 	}
 	return pay.DoWithParams(path, params, in, out)
@@ -218,31 +232,31 @@ func (pay *WeixinPay) Check(raw interface{}, fn func() hash.Hash) (ok bool, err 
 	return
 }
 
+type ReplyResponse struct {
+	XMLName xml.Name `xml:"xml"`
+	Code    string   `xml:"return_code"`
+	Message string   `xml:"return_msg"`
+}
+
 // 回复微信通知
 func (pay *WeixinPay) Reply(ok bool, msg string) string {
-	var out struct {
-		xml.Name `xml:"xml"`
-		Code     string `xml:"return_code"`
-		Message  string `xml:"return_msg"`
-	}
+	var reply ReplyResponse
 	if ok {
-		out.Code = Success
+		reply.Code = Success
 	} else {
-		out.Code = Fail
+		reply.Code = Fail
 	}
-	out.Message = msg
-	body, _ := xml.Marshal(out)
+	reply.Message = msg
+	body, _ := xml.Marshal(reply)
 	return string(body)
 }
 
 type UnifiedOrderRequest struct {
-	XMLName struct{} `xml:"xml" json:"-"`
-
 	// 必选参数
 	Body           string `xml:"body"`             // 商品或支付单简要描述
 	OutTradeNo     string `xml:"out_trade_no"`     // 商户系统内部的订单号,32个字符内、可包含字母, 其他说明见商户订单号
 	TotalFee       int64  `xml:"total_fee"`        // 订单总金额，单位为分，详见支付金额
-	SpbillCreateIP string `xml:"spbill_create_ip"` // APP和网页支付提交用户端ip，Native支付填调用微信支付API的机器IP。
+	SpbillCreateIp string `xml:"spbill_create_ip"` // APP和网页支付提交用户端ip，Native支付填调用微信支付API的机器IP。
 	NotifyUrl      string `xml:"notify_url"`       // 接收微信支付异步通知回调地址，通知url必须为直接可访问的url，不能携带参数。
 	TradeType      string `xml:"trade_type"`       // 取值如下：JSAPI，NATIVE，APP，详细说明见参数规定
 
@@ -262,8 +276,6 @@ type UnifiedOrderRequest struct {
 }
 
 type UnifiedOrderResponse struct {
-	XMLName struct{} `xml:"xml" json:"-"`
-
 	// 必选返回
 	PrepayId  string `xml:"prepay_id"`  // 微信生成的预支付回话标识，用于后续接口调用中使用，该值有效期为2小时
 	TradeType string `xml:"trade_type"` // 调用接口提交的交易类型，取值如下：JSAPI，NATIVE，APP，详细说明见参数规定
@@ -316,16 +328,12 @@ func (pay *WeixinPay) Jsapi(req *UnifiedOrderRequest) (resp *JsapiResponse, err 
 }
 
 type OrderQueryRequest struct {
-	XMLName struct{} `xml:"xml" json:"-"`
-
 	// 下面这些参数至少提供一个
 	TransactionId string `xml:"transaction_id,omitempty"` // 微信的订单号，优先使用
 	OutTradeNo    string `xml:"out_trade_no,omitempty"`   // 商户系统内部的订单号，当没提供transaction_id时需要传这个。
 }
 
 type OrderQueryResponse struct {
-	XMLName struct{} `xml:"xml" json:"-"`
-
 	// 必选返回
 	TradeState     string `xml:"trade_state"`      // 交易状态
 	TradeStateDesc string `xml:"trade_state_desc"` // 对当前查询订单状态的描述和下一步操作的指引
@@ -361,8 +369,6 @@ func (pay *WeixinPay) OrderQuery(req *OrderQueryRequest) (resp *OrderQueryRespon
 }
 
 type CloseOrderRequest struct {
-	XMLName struct{} `xml:"xml" json:"-"`
-
 	// 必选参数
 	OutTradeNo string `xml:"out_trade_no"` // 商户系统内部订单号
 }
@@ -374,8 +380,6 @@ func (pay *WeixinPay) CloseOrder(req *CloseOrderRequest) (err error) {
 }
 
 type RefundRequest struct {
-	XMLName struct{} `xml:"xml" json:"-"`
-
 	// 必选参数, TransactionId 和 OutTradeNo 二选一即可.
 	TransactionId string `xml:"transaction_id"` // 微信生成的订单号，在支付通知中有返回
 	OutTradeNo    string `xml:"out_trade_no"`   // 商户侧传给微信的订单号
@@ -390,8 +394,6 @@ type RefundRequest struct {
 }
 
 type RefundResponse struct {
-	XMLName struct{} `xml:"xml" json:"-"`
-
 	// 必选返回
 	TransactionId string `xml:"transaction_id"` // 微信订单号
 	OutTradeNo    string `xml:"out_trade_no"`   // 商户系统内部的订单号
@@ -421,8 +423,6 @@ func (pay *WeixinPay) Refund(req *RefundRequest) (resp *RefundResponse, err erro
 }
 
 type RefundQueryRequest struct {
-	XMLName struct{} `xml:"xml" json:"-"`
-
 	// 必选参数, 四选一
 	TransactionId string `xml:"transaction_id,omitempty"` // 微信订单号
 	OutTradeNo    string `xml:"out_trade_no,omitempty"`   // 商户订单号
@@ -431,8 +431,6 @@ type RefundQueryRequest struct {
 }
 
 type RefundQueryResponse struct {
-	XMLName struct{} `xml:"xml" json:"-"`
-
 	// 必选返回
 	TransactionId string       `xml:"transaction_id"` // 微信订单号
 	OutTradeNo    string       `xml:"out_trade_no"`   // 商户系统内部的订单号
@@ -448,8 +446,6 @@ type RefundQueryResponse struct {
 }
 
 type RefundItem struct {
-	XMLName struct{} `xml:"xml" json:"-"`
-
 	// 必选返回
 	OutRefundNo      string `xml:"out_refund_no"`      // 商户退款单号
 	RefundId         string `xml:"refund_id"`          // 微信退款单号
@@ -475,16 +471,12 @@ func (pay *WeixinPay) RefundQuery(req *RefundQueryRequest) (resp *RefundQueryRes
 }
 
 type ReverseRequest struct {
-	XMLName struct{} `xml:"xml" json:"-"`
-
 	// 必选参数，二选一
 	TransactionId string `xml:"transaction_id,omitempty"` // 微信的订单号，优先使用
 	OutTradeNo    string `xml:"out_trade_no,omitempty"`   // 商户系统内部订单号
 }
 
 type ReverseResponse struct {
-	XMLName struct{} `xml:"xml" json:"-"`
-
 	// 必选返回
 	Recall bool `xml:"recall"` // 是否需要继续调用撤销
 }
@@ -501,8 +493,6 @@ func (pay *WeixinPay) Reverse(req *ReverseRequest) (resp *ReverseResponse, err e
 }
 
 type DownloadBillRequest struct {
-	XMLName struct{} `xml:"xml" json:"-"`
-
 	// 必选参数
 	BillDate string `xml:"bill_date"` // 下载对账单的日期，格式：20140603
 	BillType string `xml:"bill_type"` // 账单类型
@@ -531,4 +521,51 @@ func (pay *WeixinPay) DownloadBillToFile(req *DownloadBillRequest, path string) 
 		return err
 	}
 	return ioutil.WriteFile(path, []byte(out), 0644)
+}
+
+// https://pay.weixin.qq.com/wiki/doc/api/jsapi.php?chapter=9_7&index=8
+type WeixinPayNotify struct {
+	XMLName    xml.Name `xml:"xml"`
+	Code       string   `xml:"return_code"`
+	Message    string   `xml:"return_msg"`
+	ResultCode string   `xml:"result_code"`
+	ErrCode    string   `xml:"err_code,omitempty"`
+	ErrCodeDes string   `xml:"err_code_des,omitempty"`
+
+	AppId      string `xml:"appid"`
+	MchId      string `xml:"mch_id"`
+	DeviceInfo string `xml:"device_info,omitempty"`
+	NonceStr   string `xml:"nonce_str"`
+	Sign       string `xml:"sign"`
+	SignType   string `xml:"sign_type,omitempty"`
+
+	OpenId             string `xml:"openid"`
+	IsSubscribe        string `xml:"is_subscribe,omitempty"`
+	TradeType          string `xml:"trade_type"`
+	BankType           string `xml:"bank_type"`
+	TotalFee           int64  `xml:"total_fee"`
+	SettlementTotalFee int64  `xml:"settlement_total_fee,omitempty"`
+	FeeType            string `xml:"fee_type,omitempty"`
+	CashFee            string `xml:"cash_fee"`
+	CashFeeType        string `xml:"cash_fee_type,omitempty"`
+	CouponFee          int    `xml:"coupon_fee,omitempty"`    // 代金券金额<=订单金额，订单金额-代金券金额=现金支付金额
+	CouponCount        int    `xml:"coupon_count,omitempty"`  // 代金券使用数量
+	CouponType0        string `xml:"coupon_type_0,omitempty"` // CASH--充值代金券 NO_CASH---非充值代金券 并且订单使用了免充值券后有返回（取值：CASH、NO_CASH）。$n为下标,从0开始编号，举例：coupon_type_0
+	CouponType1        string `xml:"coupon_type_1,omitempty"`
+	CouponType2        string `xml:"coupon_type_2,omitempty"`
+	CouponId0          string `xml:"coupon_id_0,omitempty"` // 代金券ID,$n为下标，从0开始编号
+	CouponId1          string `xml:"coupon_id_1,omitempty"`
+	CouponId2          string `xml:"coupon_id_2,omitempty"`
+	TransactionId      string `xml:"transaction_id"`
+	OutTradeNo         string `xml:"out_trade_no"`
+	Attach             string `xml:"attach,omitempty"`
+	TimeEnd            string `xml:"time_end"`
+}
+
+func (n *WeixinPayNotify) Time() *time.Time {
+	at, err := time.Parse("20060102150405", n.TimeEnd)
+	if err != nil {
+		return nil
+	}
+	return &at
 }
